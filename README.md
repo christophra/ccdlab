@@ -207,7 +207,7 @@ The following libraries are necessary:
   * **libftdi1** (For thorlabs linear stage, etc)
     * on a debian based system: ``sudo apt-get install libftdi1-2``
 
-The following Python packages are necessary in order to run the system:
+The following Python packages are necessary in order to run the system (assuming Python 3):
 
   * **basic modules**
     * ``pip install --user numpy matplotlib``
@@ -220,7 +220,7 @@ The following Python packages are necessary in order to run the system:
   * **Psycopg2** for accessing PostgreSQL databases
     * ``pip install --user psycopg2-binary``
   * **Django** for data archive web interface
-    * ``apt-get install python-django``
+    * ``apt-get install python3-django``
     * ``pip install django-el-pagination``
   * **pylibftdi** for thorlabs linear stage, etc
     * ``pip install --user pylibftdi``  
@@ -230,7 +230,7 @@ The following Python packages are necessary in order to run the system:
 The following additional packages are required for the archive web interface:
 
   * **django, django-el-pagination, markdown, StringIO**
-    * ``pip install --user django django-el-pagination markdown StringIO``
+    * ``pip install --user django django-el-pagination markdown``
 
 To set up the database:
   * **PostgreSQL** installation
@@ -242,6 +242,7 @@ To set up the database:
     * ``psql ccdlab < db/monitor.sql``
     
 To set up password:
+  * ``apt-get install apache2-utils``
   * ``htpasswd -c -d <path to a file> <username>``
   
 
