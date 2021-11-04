@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-from optparse import OptionParser
+from argparse import ArgumentParser
 from libscrc import modbus
 
 from daemon import SimpleFactory, SimpleProtocol, SerialUSBProtocol, catch
-
+import sys
 
 class DaemonProtocol(SimpleProtocol):
     _debug = False  # Display all traffic for debug purposes.
@@ -296,14 +296,21 @@ class StandaVSProtocol(SerialUSBProtocol):
 
 
 if __name__ == '__main__':
-    parser = OptionParser(usage="usage: %prog [options] arg")
-    parser.add_option('-s', '--serial-num', help='Serial number of the device to connect to.',
-                      action='store', dest='serial_num', type='str', default='00004186')
-    parser.add_option('-p', '--port', help='Daemon port', action='store', dest='port', type='int', default=7027)
-    parser.add_option('-n', '--name', help='Daemon name', action='store', dest='name', default='standa_v_stage')
-    parser.add_option("-D", '--debug', help='Debug mode', action="store_true", dest="debug")
+    parser = ArgumentParser(description='Module for the Standa vertical stage 8MVT100-25-1.')
+    parser.add_argument('-s', '--serial-num',
+                        help='Serial number of the device to connect to.',
+                        action='store', type=str, default='00004186')
+    parser.add_argument('-p', '--port',
+                        help='Daemon port',
+                        action='store', type=int, default=7027)
+    parser.add_argument('-n', '--name',
+                        help='Daemon name',
+                        action='store', type=str, default='standa_v_stage')
+    parser.add_argument('-D', '--debug',
+                        help='Debug mode',
+                        action="store_true")
 
-    (options, args) = parser.parse_args()
+    (options, args) = parser.parse_known_args()
 
     # Object holding actual state and work logic.
     # May be anything that will be passed by reference - list, dict, object etc
