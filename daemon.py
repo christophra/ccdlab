@@ -184,7 +184,7 @@ class SerialUSBProtocol(Protocol):
 
     def connectionLost(self, reason):
         print('Disconnected from', self._devname, 'serial number', self.serial_num, reason)
-        self._updateTimer.stop(self._refresh)
+        self._updateTimer.stop()
 
     def update(self):
         pass
