@@ -43,3 +43,15 @@ class Command:
             else:
                 pos = chunk.find('=')
                 self.kwargs[chunk[:pos]] = chunk[pos+1:]
+
+def sanitize_command_line(input):
+    """Sanitize a string e.g. sent over the network so it can be parsed as a command.
+    """
+    output = input
+
+    # strip line endings, which may be LF (\n)...
+    output = input.strip('\n')
+    # ...or CR LF (\r\n)
+    output = output.strip('\r')
+
+    return output

@@ -3,7 +3,13 @@ from argparse import ArgumentParser
 from libscrc import modbus
 
 from daemon import SimpleFactory, SimpleProtocol, SerialUSBProtocol, catch
+from command import sanitize_command_line
 import sys
+
+# For debugging
+import logging
+logging.basicConfig(level=logging.ERROR)
+import pdb
 
 class DaemonProtocol(SimpleProtocol):
     _debug = False  # Display all traffic for debug purposes.
@@ -18,32 +24,69 @@ class DaemonProtocol(SimpleProtocol):
 
     @catch
     def parsePars(self, cmd, pars_o, ss, rbs):
+        """Valiate and parse the parameters of a command, then execute it.
+        """
+        # validate:
+        # supply as many parameters `ss` as in specification `pars_o`
         if len(pars_o) != len(ss):
             return False
+        # "labeled" means parameters of the form `key:value`
+        # but the code also accepts keyfoo:value or fookey:value
+        # so, e.g. parsing for position, if uposition is first, will not work
+        # TODO: fix this
+        # vs. unlabeled which are just `value`
+
+        # either all need to be labeled, or none
         is_labeled = False
         if all(':' in sss for sss in ss):
             is_labeled = True
         elif not all(':' not in sss for sss in ss):
             return False
+        # parse into `pars`:
         pars = []
+        # variant one: long list comprehension relying on implicit assumptions
         for n in range(len(pars_o)):
             pars += [[pars_o[n][0], ss[n]]]
             if is_labeled:
                 pars[-1][1] = [i for i in ss if pars_o[n][1] in i][0].split(':')[1]
+        # variant two: safer using a dictionary
+        '''
+        par_dict = {}
+        if is_labeled:
+            par_dict = {_s.split(':')[0]:_s.split(':')[1] for _s in ss}
+        else:
+            par_dict = {_par_o[1]:_s for _par_o,_s in zip(pars_o, ss)}
+
+        for _p in pars_o:
+            # this would be cooler with a tuple
+            _length = _p[0]
+            _name = _p[1]
+            pars += [[_length, par_dict[_name]]]
+        # is this really better...?
+        '''
+        # variant three (to be implemented):
+        # following key=value convention and using Sergey's Command class
+        # to not duplicate code at all
         mstr = self.mbytes(cmd, pars, rbs)
+        # no way for it to be empty, why this check?
         if mstr:
             obj['hw'].protocol.Imessage(mstr, nb=4, source=self.name)
         return True
 
     @catch
     def processMessage(self, string):
+        """Process a message sent to ccdlab. Commands for the device are defined here.
+        """
+        # TODO: use command.Command,
+        # stop duplicating code,
+        # replace the hard to navigate `if sstring=='command': ... break` structure
         cmd = SimpleProtocol.processMessage(self, string)
         if cmd is None:
             return
 
-        Sstring = (string.strip('\n')).split(';')
-        for sstring in Sstring:
+        for sstring in sanitize_command_line(string).split(';'):
             sstring = sstring.lower()
+            #sstring = sstring.strip()
             while True:
                 # managment commands
                 if sstring == 'get_status':
@@ -52,40 +95,47 @@ class DaemonProtocol(SimpleProtocol):
                     break
                 if sstring == 'timeout':
                     self.factory.log('command timeout - removing command from list and flushing buffer')
-                    hw._buffer = b''  # empty buffer after timeout
-                    hw.commands.pop(0)
+                    obj['hw'].protocol._buffer = b''  # empty buffer after timeout
+                    if obj['hw'].protocol.commands:
+                        obj['hw'].protocol.commands.pop(0)
                     break
                 if not obj['hw_connected']:
                     break
+
                 Imessage = obj['hw'].protocol.Imessage
-                if string == 'sync':
-                    # sync after failed comand
-                    Imessage(bytearray(64), nb=64, source=self.name)
+                #if string == 'sync': # TODO verify
+                if sstring == 'sync':
+                    # sync after failed command
+                    Imessage(bytes(64), nb=64, source=self.name) # the current `twisted` version expects the immutable `bytes`, not the mutable `bytearray`
                     break
 
-                # general query command (xxxx comands from manual)(for specifically implemented comands see below)
+                # general query command (xxxx commands from manual)(for specifically implemented commands see below)
                 ss = sstring.split('<')
                 if len(ss) == 2 and len(ss[1]) == 4:
                     Imessage(ss[1], nb=int(ss[0]), source=self.name)
                     daemon.log('command ', sstring)
                     break
                 elif len(ss) > 1:
-                    daemon.log('unable to parse command, format sould be "nb<xxxx" insted of: '+sstring, 'error')
+                    daemon.log('unable to parse command, format should be "nb<xxxx" insted of: '+sstring, 'error')
                     break
 
-                # human readable version for the most useful comands
+                # human-readable versions of the most common controller commands:
+
                 if sstring == 'get_device_info':
                     # get some device info (model, etc.)
                     Imessage('gsti', nb=70, source=self.name)
                     break
+
                 if sstring == 'get_move_pars':
                     # get movement parameters
                     Imessage('gmov', nb=30, source=self.name)
                     break
+
                 if sstring == 'get_position':
                     # get movement parameters
                     Imessage('gpos', nb=26, source=self.name)
                     break
+
                 if sstring.startswith('set_move_pars'):
                     # set movement parameters, examples:
                     # set_move_pars speed:2000 uspeed:0 accel:2000 decel:5000 anti_play_speed:2000 uanti_play_speed:0
@@ -94,12 +144,14 @@ class DaemonProtocol(SimpleProtocol):
                     if self.parsePars('smov', pars_o, sstring.split(' ')[1:], 10):
                         daemon.log('Setting movement parameters to ', sstring)
                         break
+
                 if sstring.startswith('move_in_direction'):
                     # set movement parameters
                     pars_o = [[4, 'dpos'], [2, 'udpos']]
                     if self.parsePars('movr', pars_o, sstring.split(' ')[1:], 6):
                         daemon.log('move ', sstring)
                         break
+
                 if sstring.startswith('move'):
                     # set movement parameters
                     pars_o = [[4, 'pos'], [2, 'upos']]
@@ -111,11 +163,12 @@ class DaemonProtocol(SimpleProtocol):
                     Imessage('zero', nb=4, source=self.name)
                     daemon.log('reset zero')
                     break
-                # general set command (xxxx comands from manual) (for specifically implemented comands see below)
+
+                # general set command (xxxx commands from manual) (for specifically implemented commands see below)
                 # command example: smov 4:2000 1:0 2:2000 2:5000 4:2000 1:0 10:r
                 # for these commands one needs to specity the number of bytes given value occupies:
                 # nbytes1:value1 nbytes2:value2 nreserved:r
-                #
+                # TODO: change to meaningful variable names
                 ss = sstring.split(' ')
                 if all(':' in sss for sss in ss[1:]) and all(nnn.split(':')[0].isdigit() for nnn in ss[1:]):
                     cmd = ss[0]
@@ -139,11 +192,23 @@ class StandaVSProtocol(SerialUSBProtocol):
     _bs = b''
 
     @catch
-    def __init__(self, serial_num, obj, debug=False):
+    def __init__(self, serial_num, obj,
+                 refresh=1.0,
+                 debug=False,
+                 ):
         self.commands = []  # Queue of command sent to the device which will provide replies, each entry is a dict with keys "cmd","source"
         self.status_commands = [[26, 'gpos'], [30, 'gmov']]  # commands send when device not busy to keep tabs on the state
+        if debug:
+            self.status_commands = [] # TODO: make a separate option?
 
-        super().__init__(obj=obj, serial_num=serial_num, refresh=1, baudrate=115200, bytesize=8, parity='N', stopbits=2, timeout=400, debug=debug)
+        super().__init__(obj=obj, serial_num=serial_num, refresh=refresh, debug=debug,
+                        # 8SMC5-USB programming manual, sec. 6.2.1
+                         baudrate=115200,
+                         bytesize=8,
+                         parity='N',
+                         stopbits=2,
+                         timeout=400,
+                         )
 
     @catch
     def connectionMade(self):
@@ -217,7 +282,7 @@ class StandaVSProtocol(SerialUSBProtocol):
                     self._buffer = b''
                     break
                 if self.commands[0]['status'] == 'sync':
-                    # sync after failed comand
+                    # sync after failed command
                     r_str = 'sync'
                     if len(self.commands) > 1 and self.commands[1]['status'] == 'sent':
                         # remove failed command
@@ -235,22 +300,35 @@ class StandaVSProtocol(SerialUSBProtocol):
                     self.object['decel'] = self.sintb(2)
                     self.object['anti_play_speed'] = self.sintb(4)
                     self.object['uanti_play_speed'] = self.sintb(1)
+                    # TODO: use command.Command
                     if self.commands[0]['status'] != 'sent_status':
-                        r_str = 'speed:'+self.object['speed']+' '
-                        r_str += 'uspeed:'+self.object['uspeed']+' '
-                        r_str += 'accel:'+self.object['accel']+' '
-                        r_str += 'decel:'+self.object['decel']+' '
-                        r_str += 'anti_play_speed:'+self.object['anti_play_speed']+' '
-                        r_str += 'uanti_play_speed:'+self.object['uanti_play_speed']
+                        r_str = ' '.join(['{0:s}:{1}'.format(_k, self.object[_k]) \
+                                            for _k in ['speed',
+                                                        'uspeed',
+                                                        'accel',
+                                                        'decel',
+                                                        'anti_play_speed',
+                                                        'uanti_play_speed',
+                                                        ]])
+                        #r_str = 'speed:'+self.object['speed']+' '
+                        #r_str += 'uspeed:'+self.object['uspeed']+' '
+                        #r_str += 'accel:'+self.object['accel']+' '
+                        #r_str += 'decel:'+self.object['decel']+' '
+                        #r_str += 'anti_play_speed:'+self.object['anti_play_speed']+' '
+                        #r_str += 'uanti_play_speed:'+self.object['uanti_play_speed']
                     break
                 if self.iscom('gpos'):
                     self.object['position'] = self.sintb(4)
                     self.object['uposition'] = int(self.sintb(2))
                     self.object['encposition'] = int(self.sintb(8))
                     if self.commands[0]['status'] != 'sent_status':
-                        r_str = 'pos:'+self.object['position']+' '
-                        r_str += 'upos:'+self.object['uposition']+' '
-                        r_str += 'encpos:'+self.object['encposition']
+                        # TODO: use command.Command
+                        r_str = ' '.join(['{0:s}:{1}'.format(_k, self.object[_k]) \
+                                            for _k in ['position',
+                                                       'uposition',
+                                                       'encposition']])
+                        #r_str += 'pos:{position} upos:{uposition} encpos:{encposition}'\
+                        #        .format(**(self.object))
                     break
                 # not recognized command, just pass the output
                 r_str = self._bs
@@ -268,7 +346,7 @@ class StandaVSProtocol(SerialUSBProtocol):
             print(">> serial >>", string, 'expecting', nb, 'bytes')
 
         if string[0] == 0:
-            # sync after failed comand, the sync is put at the front of the queue
+            # sync after failed command, the sync is put at the front of the queue
             self.commands = [{'cmd': string, 'nb': nb, 'source': source, 'status': 'sync'}]+self.commands
         else:
             self.commands.append({'cmd': string, 'nb': nb, 'source': source, 'status': 'new'})
@@ -298,17 +376,21 @@ class StandaVSProtocol(SerialUSBProtocol):
 if __name__ == '__main__':
     parser = ArgumentParser(description='Module for the Standa vertical stage 8MVT100-25-1.')
     parser.add_argument('-s', '--serial-num',
-                        help='Serial number of the device to connect to.',
-                        action='store', type=str, default='00004186')
+                        help='Serial number of the device to connect to, used in SerialUSBProtocol.__init__. \n Generally written on the bottom of the controller, here the number is in hexadecimal and zero-padded to 8 digits.',
+                        action='store', type=str, default='00004CCA') # written on controller, in hexadecimal, zero-padded to 8
     parser.add_argument('-p', '--port',
-                        help='Daemon port',
+                        help='Daemon port, where `telnet localhost [PORT]` sends commands to the daemon.',
                         action='store', type=int, default=7027)
     parser.add_argument('-n', '--name',
                         help='Daemon name',
                         action='store', type=str, default='standa_v_stage')
+    parser.add_argument('-r', '--refresh',
+                        help='Interval in seconds to update the command queue. For [REFRESH]<=0, use the default defined in SerialUSBProtocol.',
+                        action='store', type=float, default=1.0)
     parser.add_argument('-D', '--debug',
                         help='Debug mode',
                         action="store_true")
+
 
     (options, args) = parser.parse_known_args()
 
@@ -322,12 +404,20 @@ if __name__ == '__main__':
     daemon.name = options.name
     obj['daemon'] = daemon
 
-    proto = StandaVSProtocol(serial_num=options.serial_num, obj=obj, debug=options.debug)
+    proto = StandaVSProtocol(serial_num=options.serial_num,
+                             obj=obj,
+                             refresh=options.refresh,
+                             debug=options.debug,
+                             )
 
     if options.debug:
         daemon._protocol._debug = True
 
-    # Incoming connections
+    # Incoming connections (only via TCP?)
     daemon.listen(options.port)
+    #daemon.connect('localhost', options.port)
+
+    # Outgoing connections (not in standa_r_stage) - what does this do?
+    #proto.connect(options.hw_host, options.hw_port)
 
     daemon._reactor.run()
