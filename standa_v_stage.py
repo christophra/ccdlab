@@ -60,9 +60,9 @@ class DaemonProtocol(SimpleProtocol):
 
         # either all need to be labeled, or none
         is_labeled = False
-        if all(':' in sss for sss in ss):
+        if all('=' in sss for sss in ss):
             is_labeled = True
-        elif not all(':' not in sss for sss in ss):
+        elif not all('=' not in sss for sss in ss):
             return False
         # parse into `pars`:
         pars = []
@@ -70,12 +70,12 @@ class DaemonProtocol(SimpleProtocol):
         for n in range(len(pars_o)):
             pars += [[pars_o[n][0], ss[n]]]
             if is_labeled:
-                pars[-1][1] = [i for i in ss if pars_o[n][1] in i][0].split(':')[1]
+                pars[-1][1] = [i for i in ss if pars_o[n][1] in i][0].split('=')[1]
         # variant two: safer using a dictionary
         '''
         par_dict = {}
         if is_labeled:
-            par_dict = {_s.split(':')[0]:_s.split(':')[1] for _s in ss}
+            par_dict = {_s.split('=')[0]:_s.split('=')[1] for _s in ss}
         else:
             par_dict = {_par_o[1]:_s for _par_o,_s in zip(pars_o, ss)}
 
@@ -169,7 +169,7 @@ class DaemonProtocol(SimpleProtocol):
 
                 if sstring.startswith('set_move_pars'):
                     # set movement parameters, examples:
-                    # set_move_pars speed:2000 uspeed:0 accel:2000 decel:5000 anti_play_speed:2000 uanti_play_speed:0
+                    # set_move_pars speed=2000 uspeed=0 accel=2000 decel=5000 anti_play_speed=2000 uanti_play_speed=0
                     # set_move_pars 2000 0 2000 5000 2000 0
                     pars_o = [[4, 'speed'], [1, 'uspeed'], [2, 'accel'], [2, 'decel'], [4, 'anti_play_speed'], [1, 'uanti_play_speed']]
                     if self.parsePars('smov', pars_o, sstring.split(' ')[1:], 10):
@@ -197,19 +197,19 @@ class DaemonProtocol(SimpleProtocol):
                     break
 
                 # general set command (xxxx commands from manual) (for specifically implemented commands see below)
-                # command example: smov 4:2000 1:0 2:2000 2:5000 4:2000 1:0 10:r
+                # command example: smov 4=2000 1=0 2=2000 2=5000 4=2000 1=0 10=r
                 # for these commands one needs to specity the number of bytes given value occupies:
                 # nbytes1:value1 nbytes2:value2 nreserved:r
                 # TODO: change to meaningful variable names
                 ss = sstring.split(' ')
-                if all(':' in sss for sss in ss[1:]) and all(nnn.split(':')[0].isdigit() for nnn in ss[1:]):
+                if all('=' in sss for sss in ss[1:]) and all(nnn.split('=')[0].isdigit() for nnn in ss[1:]):
                     cmd = ss[0]
                     ss = ss[1:]
                     rbs = 0
-                    if len(ss) > 1 and ss[-1].split(':')[1] == 'r':
-                        rbs = int(ss[-1].split(':')[0])
+                    if len(ss) > 1 and ss[-1].split('=')[1] == 'r':
+                        rbs = int(ss[-1].split('=')[0])
                         ss = ss[:-1]
-                    pars = [sss.split(':') for sss in ss]
+                    pars = [sss.split('=') for sss in ss]
                     pars = list(map(lambda x: [int(x[0]), x[1]], pars))
                     mstr = self.mbytes(cmd, pars, rbs)
                     if mstr:
@@ -346,7 +346,7 @@ class StandaVSProtocol(SerialUSBProtocol):
                     })
                     # TODO: use command.Command
                     if self.commands[0]['status'] != 'sent_status':
-                        r_str = 'speed:{speed} uspeed:{uspeed} accel:{accel} anti_play_speed:{anti_play_speed} uanti_play_speed:{uanti_play_speed}'.format(**(self.object))
+                        r_str = 'speed={speed} uspeed={uspeed} accel={accel} anti_play_speed={anti_play_speed} uanti_play_speed={uanti_play_speed}'.format(**(self.object))
                     break
 
                 if self.iscom('gpos'):
@@ -357,7 +357,7 @@ class StandaVSProtocol(SerialUSBProtocol):
                     })
                     if self.commands[0]['status'] != 'sent_status':
                         # TODO: use command.Command
-                        r_str = 'position:{position} uposition:{uposition} encposition:{encposition}'.format(**(self.object))
+                        r_str = 'position={position} uposition={uposition} encposition={encposition}'.format(**(self.object))
                     break
 
                 # not recognized command, just pass the output
