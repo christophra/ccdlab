@@ -4,7 +4,15 @@ import os, sys
 import shlex
 
 class Command:
-    """Parse a text command into command name and arguments, both positional and keyword"""
+    """Parse a text command into command name and arguments, both positional and keyword.
+    The expected format is
+        name arg1 arg2 keyA=valueA keyB=valueB 
+    where keyword arguments can stand at any position.
+    The parsing output stored as
+        self.name = name
+        self.kwarg = {key:value}
+        self.args = [arg]
+    """
     def __init__(self, string):
         self.name = None
         self.string = None
@@ -49,9 +57,7 @@ def sanitize_command_line(input):
     """
     output = input
 
-    # strip line endings, which may be LF (\n)...
-    output = input.strip('\n')
-    # ...or CR LF (\r\n)
-    output = output.strip('\r')
+    # strip line endings, which may be LF or CR LF
+    output = input.strip('\n').strip('\r')
 
     return output

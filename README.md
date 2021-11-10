@@ -226,10 +226,10 @@ The following Python packages are necessary in order to run the system (assuming
     * ``pip install --user pylibftdi``  
   * **pyudev** for recognizing usb devices, etc
     * ``pip install --user pyudev``
-    
+
 The following additional packages are required for the archive web interface:
 
-  * **django, django-el-pagination, markdown, StringIO**
+  * **django, django-el-pagination, markdown**
     * ``pip install --user django django-el-pagination markdown``
 
 To set up the database:
@@ -240,11 +240,11 @@ To set up the database:
     * ``createdb ccdlab``
     * ``psql ccdlab < db/log.sql``
     * ``psql ccdlab < db/monitor.sql``
-    
+
 To set up password:
   * ``apt-get install apache2-utils``
   * ``htpasswd -c -d <path to a file> <username>``
-  
+
 
 # TODO
 

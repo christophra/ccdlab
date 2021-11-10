@@ -16,12 +16,15 @@ import sys
 import re
 import socket
 import time
+import logging
+logging.basicConfig(level=logging.ERROR)
 
 from command import Command
 
 
 def catch(func):
     '''Decorator to catch errors inside functions and print tracebacks'''
+    # TODO: make way to toggle this
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
@@ -208,7 +211,6 @@ class SerialUSBProtocol(Protocol):
 
         if self._debug:
             print(">>", self._devname, '>>', string)
-
         self.transport.write(string)
 
 

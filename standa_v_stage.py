@@ -12,10 +12,21 @@ logging.basicConfig(level=logging.ERROR)
 import pdb
 
 class DaemonProtocol(SimpleProtocol):
+    """Protocol specifying how to communicate with the Standa 8MSC5-USB controller.
+    """
     _debug = False  # Display all traffic for debug purposes.
 
     @catch
     def mbytes(self, cmd, pars, reserved_bytes=0):
+        r"""Assemble the byte string of a four-character command as specified in
+        the Standa 8MSC5-USB user manual.
+        cmd : str
+            name of the command
+        pars : list [[int, str]]
+            list of parameter values and the number of bytes they should take
+        reserved_bytes : int, default: 0
+            bytes to append TODO: clarify purpose
+        """
         bss = cmd.encode('ascii')+b''.join([int(p[1]).to_bytes(p[0], 'little', signed=True) for p in pars])
         if reserved_bytes:
             bss += reserved_bytes*b'\xcc'
@@ -23,8 +34,19 @@ class DaemonProtocol(SimpleProtocol):
         return bss
 
     @catch
-    def parsePars(self, cmd, pars_o, ss, rbs):
-        """Valiate and parse the parameters of a command, then execute it.
+    def parsePars(self, cmd, pars_o, ss, rbs, nb=4):
+        """Valiate and parse the parameters of a command, then send it.
+        cmd : str
+            command to be sent
+        pars_o : list [[int, str]]
+            specification of parameters as [number of bytes, name]
+        ss : list [str]
+            values of the parameters, in the same order as pars_o
+        rbs : int
+            reserved bytes appended by mbytes
+        nb : int, default: 4
+            number of bytes expected as a response, default of 4 is for commands
+            like move, set_move_pars, move_in_direction.
         """
         # validate:
         # supply as many parameters `ss` as in specification `pars_o`
@@ -67,26 +89,35 @@ class DaemonProtocol(SimpleProtocol):
         # variant three (to be implemented):
         # following key=value convention and using Sergey's Command class
         # to not duplicate code at all
-        mstr = self.mbytes(cmd, pars, rbs)
-        # no way for it to be empty, why this check?
+
+        # assemble byte string
+        mstr = self.mbytes(cmd, pars, reserved_bytes=rbs)
+
+        # if it's not empty, send it.
         if mstr:
-            obj['hw'].protocol.Imessage(mstr, nb=4, source=self.name)
+            obj['hw'].protocol.Imessage(mstr, nb=nb, source=self.name)
         return True
 
     @catch
     def processMessage(self, string):
-        """Process a message sent to ccdlab. Commands for the device are defined here.
+        """Process the message `string` sent to ccdlab. This can be
+            1) a command specified by the controller manual
+            2) a higher-level command defined in this method
+            (either meant for the device, or to be handled within ccdlab)
+        A command will be parsed, processed into a version understood by the
+        device, and appended to the command queue.
         """
         # TODO: use command.Command,
         # stop duplicating code,
         # replace the hard to navigate `if sstring=='command': ... break` structure
+        # Solve how SimpleProtocol.processMessage already takes up some of the task.
+        # TODO: document command syntax in docstring.
         cmd = SimpleProtocol.processMessage(self, string)
         if cmd is None:
             return
 
         for sstring in sanitize_command_line(string).split(';'):
             sstring = sstring.lower()
-            #sstring = sstring.strip()
             while True:
                 # managment commands
                 if sstring == 'get_status':
@@ -103,7 +134,7 @@ class DaemonProtocol(SimpleProtocol):
                     break
 
                 Imessage = obj['hw'].protocol.Imessage
-                #if string == 'sync': # TODO verify
+                #if string == 'sync': # TODO verify, does `sync` need to be alone?
                 if sstring == 'sync':
                     # sync after failed command
                     Imessage(bytes(64), nb=64, source=self.name) # the current `twisted` version expects the immutable `bytes`, not the mutable `bytearray`
@@ -158,6 +189,7 @@ class DaemonProtocol(SimpleProtocol):
                     if self.parsePars('move', pars_o, sstring.split(' ')[1:], 6):
                         daemon.log('move ', sstring)
                         break
+
                 if sstring == 'set_zero':
                     # set current position as zero
                     Imessage('zero', nb=4, source=self.name)
@@ -189,6 +221,10 @@ class DaemonProtocol(SimpleProtocol):
 
 
 class StandaVSProtocol(SerialUSBProtocol):
+    """Hardware protocol.
+    """
+    # TODO: explain.
+
     _bs = b''
 
     @catch
@@ -221,15 +257,17 @@ class StandaVSProtocol(SerialUSBProtocol):
         super().connectionLost(reason)
         self.object['hw_connected'] = 0
         self.commands = []
-        self.object['position'] = 'nan'
-        self.object['uposition'] = 'nan'
-        self.object['encposition'] = 'nan'
-        self.object['speed'] = 'nan'
-        self.object['uspeed'] = 'nan'
-        self.object['accel'] = 'nan'
-        self.object['decel'] = 'nan'
-        self.object['anti_play_speed'] = 'nan'
-        self.object['uanti_play_speed'] = 'nan'
+        self.object.update({
+            'position' : 'nan',
+            'uposition' : 'nan',
+            'encposition' : 'nan',
+            'speed' : 'nan',
+            'uspeed' : 'nan',
+            'accel' : 'nan',
+            'decel' : 'nan',
+            'anti_play_speed' : 'nan',
+            'uanti_play_speed' : 'nan',
+        })
 
     @catch
     def processMessage(self, string):
@@ -273,6 +311,7 @@ class StandaVSProtocol(SerialUSBProtocol):
 
             r_str = None
             while True:
+
                 # check buffer empty and checksum
                 if self._buffer != b'':
                     print('warning buffer not empty after expected number of bytes')
@@ -281,6 +320,7 @@ class StandaVSProtocol(SerialUSBProtocol):
                     r_str = 'checksum failed'
                     self._buffer = b''
                     break
+
                 if self.commands[0]['status'] == 'sync':
                     # sync after failed command
                     r_str = 'sync'
@@ -288,60 +328,55 @@ class StandaVSProtocol(SerialUSBProtocol):
                         # remove failed command
                         self.commands.pop(0)
                     break
-                r_str = b''
+
+                r_str = b'' # response string
                 if self.iscom('gsti'):
                     r_str = self.strb(16)+' '
                     r_str += self.strb(24)
                     break
+
                 if self.iscom('gmov'):
-                    self.object['speed'] = self.sintb(4)
-                    self.object['uspeed'] = self.sintb(1)
-                    self.object['accel'] = self.sintb(2)
-                    self.object['decel'] = self.sintb(2)
-                    self.object['anti_play_speed'] = self.sintb(4)
-                    self.object['uanti_play_speed'] = self.sintb(1)
+                    self.object.update({
+                        'speed' : self.sintb(4),
+                        'uspeed' : self.sintb(1),
+                        'accel' : self.sintb(2),
+                        'decel' : self.sintb(2),
+                        'anti_play_speed' : self.sintb(4),
+                        'uanti_play_speed' : self.sintb(1),
+                    })
                     # TODO: use command.Command
                     if self.commands[0]['status'] != 'sent_status':
-                        r_str = ' '.join(['{0:s}:{1}'.format(_k, self.object[_k]) \
-                                            for _k in ['speed',
-                                                        'uspeed',
-                                                        'accel',
-                                                        'decel',
-                                                        'anti_play_speed',
-                                                        'uanti_play_speed',
-                                                        ]])
-                        #r_str = 'speed:'+self.object['speed']+' '
-                        #r_str += 'uspeed:'+self.object['uspeed']+' '
-                        #r_str += 'accel:'+self.object['accel']+' '
-                        #r_str += 'decel:'+self.object['decel']+' '
-                        #r_str += 'anti_play_speed:'+self.object['anti_play_speed']+' '
-                        #r_str += 'uanti_play_speed:'+self.object['uanti_play_speed']
+                        r_str = 'speed:{speed} uspeed:{uspeed} accel:{accel} anti_play_speed:{anti_play_speed} uanti_play_speed:{uanti_play_speed}'.format(**(self.object))
                     break
+
                 if self.iscom('gpos'):
-                    self.object['position'] = self.sintb(4)
-                    self.object['uposition'] = int(self.sintb(2))
-                    self.object['encposition'] = int(self.sintb(8))
+                    self.object.update({
+                        'position' : self.sintb(4),
+                        'uposition' : int(self.sintb(2)),
+                        'encposition' : int(self.sintb(8)),
+                    })
                     if self.commands[0]['status'] != 'sent_status':
                         # TODO: use command.Command
-                        r_str = ' '.join(['{0:s}:{1}'.format(_k, self.object[_k]) \
-                                            for _k in ['position',
-                                                       'uposition',
-                                                       'encposition']])
-                        #r_str += 'pos:{position} upos:{uposition} encpos:{encposition}'\
-                        #        .format(**(self.object))
+                        r_str = 'position:{position} uposition:{uposition} encposition:{encposition}'.format(**(self.object))
                     break
+
                 # not recognized command, just pass the output
                 r_str = self._bs
                 break
             if type(r_str) == str:
-                daemon.messageAll(r_str, self.commands[0]['source'])
+                daemon.messageAll(r_str, name=self.commands[0]['source'])
             elif r_str != b'':
-                daemon.messageAll(r_str, self.commands[0]['source'])
+                daemon.messageAll(r_str, name=self.commands[0]['source'])
         self.commands.pop(0)
 
     @catch
     def Imessage(self, string, nb, source='itself'):
-        """Sending outgoing message"""
+        """Send outgoing message.
+        string : bytes
+            Message to be sent.
+        nb : int
+            number of bytes to expect in response
+        """
         if self._debug:
             print(">> serial >>", string, 'expecting', nb, 'bytes')
 
@@ -413,11 +448,8 @@ if __name__ == '__main__':
     if options.debug:
         daemon._protocol._debug = True
 
-    # Incoming connections (only via TCP?)
+    # Incoming connections
     daemon.listen(options.port)
-    #daemon.connect('localhost', options.port)
 
-    # Outgoing connections (not in standa_r_stage) - what does this do?
-    #proto.connect(options.hw_host, options.hw_port)
-
+    #
     daemon._reactor.run()
