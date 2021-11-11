@@ -52,10 +52,10 @@ class DaemonProtocol(SimpleProtocol):
         # supply as many parameters `ss` as in specification `pars_o`
         if len(pars_o) != len(ss):
             return False
-        # "labeled" means parameters of the form `key:value`
+        # "labeled" means parameters of the form `key=value`
         # but the code also accepts keyfoo:value or fookey:value
         # so, e.g. parsing for position, if uposition is first, will not work
-        # TODO: fix this
+        # TODO: fix this (easiest: using command.Command)
         # vs. unlabeled which are just `value`
 
         # either all need to be labeled, or none
@@ -100,10 +100,9 @@ class DaemonProtocol(SimpleProtocol):
 
     @catch
     def processMessage(self, string):
-        """Process the message `string` sent to ccdlab. This can be
-            1) a command specified by the controller manual
-            2) a higher-level command defined in this method
-            (either meant for the device, or to be handled within ccdlab)
+        """Process the message `string` sent to ccdlab. This method
+        1) defines higher-level commands for the device, and
+        2) forwards commands specified by the device manual.
         A command will be parsed, processed into a version understood by the
         device, and appended to the command queue.
         """
@@ -111,7 +110,7 @@ class DaemonProtocol(SimpleProtocol):
         # stop duplicating code,
         # replace the hard to navigate `if sstring=='command': ... break` structure
         # Solve how SimpleProtocol.processMessage already takes up some of the task.
-        # TODO: document command syntax in docstring.
+        # TODO: document command syntax in docstring - well no, README.md already has it.
         cmd = SimpleProtocol.processMessage(self, string)
         if cmd is None:
             return
@@ -199,8 +198,8 @@ class DaemonProtocol(SimpleProtocol):
                 # general set command (xxxx commands from manual) (for specifically implemented commands see below)
                 # command example: smov 4=2000 1=0 2=2000 2=5000 4=2000 1=0 10=r
                 # for these commands one needs to specity the number of bytes given value occupies:
-                # nbytes1:value1 nbytes2:value2 nreserved:r
-                # TODO: change to meaningful variable names
+                # nbytes1=value1 nbytes2=value2 nreserved=r
+                # TODO: change to meaningful variable names, move to method
                 ss = sstring.split(' ')
                 if all('=' in sss for sss in ss[1:]) and all(nnn.split('=')[0].isdigit() for nnn in ss[1:]):
                     cmd = ss[0]
@@ -221,7 +220,7 @@ class DaemonProtocol(SimpleProtocol):
 
 
 class StandaVSProtocol(SerialUSBProtocol):
-    """Hardware protocol.
+    """Hardware protocol for communication with the 8MSC5-USB controller.
     """
     # TODO: explain.
 
@@ -234,11 +233,12 @@ class StandaVSProtocol(SerialUSBProtocol):
                  ):
         self.commands = []  # Queue of command sent to the device which will provide replies, each entry is a dict with keys "cmd","source"
         self.status_commands = [[26, 'gpos'], [30, 'gmov']]  # commands send when device not busy to keep tabs on the state
+
         if debug:
-            self.status_commands = [] # TODO: make a separate option?
+            self.status_commands = []
 
         super().__init__(obj=obj, serial_num=serial_num, refresh=refresh, debug=debug,
-                        # 8SMC5-USB programming manual, sec. 6.2.1
+                        # from the 8SMC5-USB programming manual, sec. 6.2.1:
                          baudrate=115200,
                          bytesize=8,
                          parity='N',
@@ -388,6 +388,8 @@ class StandaVSProtocol(SerialUSBProtocol):
 
     @catch
     def update(self):
+        """Method looped at the defined refresh rate, e.g. 1 second.
+        """
         if self._debug:
             print("----------------------- command queue ----------------------------")
             for k in self.commands:
@@ -411,7 +413,7 @@ class StandaVSProtocol(SerialUSBProtocol):
 if __name__ == '__main__':
     parser = ArgumentParser(description='Module for the Standa vertical stage 8MVT100-25-1.')
     parser.add_argument('-s', '--serial-num',
-                        help='Serial number of the device to connect to, used in SerialUSBProtocol.__init__. \n Generally written on the bottom of the controller, here the number is in hexadecimal and zero-padded to 8 digits.',
+                        help='Serial number identifying the USB device to connect to. \n The number is hexadecimal and zero-padded to 8 digits, may be found written in decimal on the bottom of the controller.',
                         action='store', type=str, default='00004CCA') # written on controller, in hexadecimal, zero-padded to 8
     parser.add_argument('-p', '--port',
                         help='Daemon port, where `telnet localhost [PORT]` sends commands to the daemon.',
@@ -423,7 +425,7 @@ if __name__ == '__main__':
                         help='Interval in seconds to update the command queue. For [REFRESH]<=0, use the default defined in SerialUSBProtocol.',
                         action='store', type=float, default=1.0)
     parser.add_argument('-D', '--debug',
-                        help='Debug mode',
+                        help='Debug mode, print extra messages and suppress default status commands.',
                         action="store_true")
 
 
@@ -435,16 +437,19 @@ if __name__ == '__main__':
            'position': 'nan', 'uposition': 'nan', 'encposition': 'nan',
            'speed': 'nan', 'uspeed': 'nan', 'accel': 'nan', 'decel': 'nan', 'anti_play_speed': 'nan', 'uanti_play_speed': 'nan', }
 
+    # daemon handling communication with the rest of the system
     daemon = SimpleFactory(DaemonProtocol, obj)
     daemon.name = options.name
     obj['daemon'] = daemon
 
+    # hardware protocol handling communication with the device
     proto = StandaVSProtocol(serial_num=options.serial_num,
                              obj=obj,
                              refresh=options.refresh,
                              debug=options.debug,
                              )
 
+    # DaemonProtocol._debug is class attribute so it can not be set by the constructor
     if options.debug:
         daemon._protocol._debug = True
 
