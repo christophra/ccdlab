@@ -3,7 +3,7 @@ from argparse import ArgumentParser
 from libscrc import modbus
 
 from daemon import SimpleFactory, SimpleProtocol, SerialUSBProtocol, catch
-from command import sanitize_command_line
+from command import sanitize_command_line, Command
 import sys
 
 # For debugging
@@ -48,6 +48,7 @@ class DaemonProtocol(SimpleProtocol):
             number of bytes expected as a response, default of 4 is for commands
             like move, set_move_pars, move_in_direction.
         """
+        # TODO: check if this only works if `ss` are strings
         # validate:
         # supply as many parameters `ss` as in specification `pars_o`
         if len(pars_o) != len(ss):
@@ -111,6 +112,9 @@ class DaemonProtocol(SimpleProtocol):
         # replace the hard to navigate `if sstring=='command': ... break` structure
         # Solve how SimpleProtocol.processMessage already takes up some of the task.
         # TODO: document command syntax in docstring - well no, README.md already has it.
+        # but: this method also implements
+        # 1) query commands nb<xxxx
+        # 2) setter commands xxxx nb1=value1 nb2=value2
         cmd = SimpleProtocol.processMessage(self, string)
         if cmd is None:
             return
@@ -161,6 +165,11 @@ class DaemonProtocol(SimpleProtocol):
                     Imessage('gmov', nb=30, source=self.name)
                     break
 
+                if sstring == 'get_edge_settings':
+                    # get movement parameters
+                    Imessage('geds', nb=26, source=self.name)
+                    break
+
                 if sstring == 'get_position':
                     # get movement parameters
                     Imessage('gpos', nb=26, source=self.name)
@@ -196,25 +205,64 @@ class DaemonProtocol(SimpleProtocol):
                     break
 
                 # general set command (xxxx commands from manual) (for specifically implemented commands see below)
-                # command example: smov 4=2000 1=0 2=2000 2=5000 4=2000 1=0 10=r
+                # command example:
+                # smov 4,2000 1,0 2,2000 2,5000 4,2000 1,0 10,r
                 # for these commands one needs to specity the number of bytes given value occupies:
-                # nbytes1=value1 nbytes2=value2 nreserved=r
-                # TODO: change to meaningful variable names, move to method
+                # nbytes1,value1 nbytes2,value2 nreserved,r
+                # TODO: change to meaningful variable names, flip bytes,value, move to method
+                '''
                 ss = sstring.split(' ')
-                if all('=' in sss for sss in ss[1:]) and all(nnn.split('=')[0].isdigit() for nnn in ss[1:]):
+                # if the format is <name> <int>,value...
+                if all(',' in sss for sss in ss[1:]) and all(nnn.split(',')[0].isdigit() for nnn in ss[1:]):
                     cmd = ss[0]
                     ss = ss[1:]
                     rbs = 0
-                    if len(ss) > 1 and ss[-1].split('=')[1] == 'r':
-                        rbs = int(ss[-1].split('=')[0])
+                    if len(ss) > 1 and ss[-1].split(',')[1] == 'r':
+                        rbs = int(ss[-1].split(',')[0])
                         ss = ss[:-1]
-                    pars = [sss.split('=') for sss in ss]
+                    pars = [sss.split(',') for sss in ss]
                     pars = list(map(lambda x: [int(x[0]), x[1]], pars))
                     mstr = self.mbytes(cmd, pars, rbs)
                     if mstr:
                         Imessage(mstr, nb=4, source=self.name)
                         daemon.log('command ', sstring)
                     break
+                '''
+                # general set command (xxxx commands from manual) (for specifically implemented commands see below)
+                # command example:
+                # smov 2000,4 0,1 2000,2 5000,2 2000,4 0,1 r,10
+                # for these commands one needs to specity the number of bytes given value occupies:
+                # value1,nbytes1 value2,nbytes2 r,nreserved
+                # TODO:  move to method, extend Command class with nbytes handling
+                parsed = Command(sstring) # parse into command and arguments
+                arg_tuples = [tuple(_a.split(',')) for _a in parsed.args] # split positional arguments into tuples of nbytes,value
+                # check expected format:
+                if all([(parsed.name is not None),
+                        (parsed.kwargs == {}),
+                        all(len(_t)==2 for _t in arg_tuples), # all is True if iterator is empty
+                        all(_t[1].isdigit() for _t in arg_tuples),
+                   ]):
+                   # convert nbytes to integers
+                   arg_tuples = [(_t[0], int(_t[1])) for _t in arg_tuples]
+                   # extract reserved bytes, if given as last argument
+                   reserved_bytes = 0
+                   if len(arg_tuples) > 0:
+                       last_value, last_bytes = arg_tuples.pop(-1)
+                       if last_value == 'r':
+                           reserved_bytes = last_bytes
+                       else:
+                           arg_tuples.append((last_value, last_bytes))
+                   # TODO: check if list of tuples is any problem vs. list of lists
+                   # TODO: check if the values must be strings, or if I could parse them into int?
+                   mstr = self.mbytes(parsed.name, # command name
+                                      [(_t[1], _t[0]) for _t in arg_tuples], # mbytes expects flipped order
+                                      reserved_bytes=reserved_bytes, # if given, else 0
+                                      )
+                   if mstr:
+                       Imessage(mstr, nb=4, source=self.name) # nb=4 assumes it's a "set command"
+                       daemon.log('command ', sstring)
+                   break
+
                 print('command', sstring, 'not implemented!')
                 break
 
@@ -336,25 +384,52 @@ class StandaVSProtocol(SerialUSBProtocol):
                     break
 
                 if self.iscom('gmov'):
-                    self.object.update({
-                        'speed' : self.sintb(4),
-                        'uspeed' : self.sintb(1),
-                        'accel' : self.sintb(2),
-                        'decel' : self.sintb(2),
-                        'anti_play_speed' : self.sintb(4),
-                        'uanti_play_speed' : self.sintb(1),
-                    })
+                    for _key, _nb in [
+                    #self.object.update(dict([ # order of execution...
+                        ('speed' , 4),
+                        ('uspeed' , 1),
+                        ('accel' , 2),
+                        ('decel' , 2),
+                        ('anti_play_speed' , 4),
+                        ('uanti_play_speed' , 1),
+                        #]))
+                        ]:
+                        self.object[_key] = self.sintb(_nb)
                     # TODO: use command.Command
                     if self.commands[0]['status'] != 'sent_status':
-                        r_str = 'speed={speed} uspeed={uspeed} accel={accel} anti_play_speed={anti_play_speed} uanti_play_speed={uanti_play_speed}'.format(**(self.object))
+                        r_str = 'speed={speed} uspeed={uspeed} accel={accel} decel={decel} anti_play_speed={anti_play_speed} uanti_play_speed={uanti_play_speed}'.format(**(self.object))
+                    break
+
+                if self.iscom('geds'):
+                    _reply = {}
+                    for _key, _nb in [
+                    #self.object.update(dict([ # order of execution...
+                        ('border_flags' , 1),
+                        ('ender_flags' , 1),
+                        ('left_border' , 4),
+                        ('uleft_border' , 2),
+                        ('right_border' , 4),
+                        ('uright_border' , 2),
+                        #]))
+                        ]:
+                        _reply[_key] = self.sintb(_nb)
+                    # TODO: use command.Command
+                    if self.commands[0]['status'] != 'sent_status':
+                        r_str = str(_reply)
                     break
 
                 if self.iscom('gpos'):
-                    self.object.update({
-                        'position' : self.sintb(4),
-                        'uposition' : int(self.sintb(2)),
-                        'encposition' : int(self.sintb(8)),
-                    })
+                    # TODO: fix this! sintb relies on order of execution!
+                    # and this is preserved only in some Python implementations
+                    # or versions from 3.7
+                    #self.object.update(dict([
+                    for _key, _value in [
+                        ('position' , self.sintb(4)),        # why are most left as str from sintb
+                        ('uposition' , int(self.sintb(2))),  # but these are cast to int?
+                        ('encposition' , int(self.sintb(8))),
+                        #]))
+                        ]:
+                        self.object[_key] = _value
                     if self.commands[0]['status'] != 'sent_status':
                         # TODO: use command.Command
                         r_str = 'position={position} uposition={uposition} encposition={encposition}'.format(**(self.object))
