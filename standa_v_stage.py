@@ -125,7 +125,7 @@ class DaemonProtocol(SimpleProtocol):
                 # managment commands
                 if sstring == 'get_status':
                     self.message(
-                        'status hw_connected={hw_connected} position={position} uposition={uposition} encposition={encposition} speed={speed} uspeed={uspeed} accel={accel} decel={decel} anti_play_speed={anti_play_speed} uanti_play_speed={uanti_play_speed}'.format(**self.object))
+                        'status hw_connected={hw_connected} position={position} uposition={uposition} encposition={encposition} speed={speed} uspeed={uspeed} accel={accel} decel={decel} anti_play_speed={anti_play_speed} uanti_play_speed={uanti_play_speed} border_flags={border_flags} ender_flags={ender_flags} left_border={left_border} uleft_border={uleft_border} right_border={right_border} uright_border={uright_border}'.format(**self.object))
                     break
                 if sstring == 'timeout':
                     self.factory.log('command timeout - removing command from list and flushing buffer')
@@ -280,7 +280,7 @@ class StandaVSProtocol(SerialUSBProtocol):
                  debug=False,
                  ):
         self.commands = []  # Queue of command sent to the device which will provide replies, each entry is a dict with keys "cmd","source"
-        self.status_commands = [[26, 'gpos'], [30, 'gmov']]  # commands send when device not busy to keep tabs on the state
+        self.status_commands = [[26, 'gpos'], [30, 'gmov'], [26, 'geds']]  # commands send when device not busy to keep tabs on the state # TODO: use high-level commands
 
         if debug:
             self.status_commands = []
@@ -401,7 +401,6 @@ class StandaVSProtocol(SerialUSBProtocol):
                     break
 
                 if self.iscom('geds'):
-                    _reply = {}
                     for _key, _nb in [
                     #self.object.update(dict([ # order of execution...
                         ('border_flags' , 1),
@@ -412,10 +411,10 @@ class StandaVSProtocol(SerialUSBProtocol):
                         ('uright_border' , 2),
                         #]))
                         ]:
-                        _reply[_key] = self.sintb(_nb)
+                        self.object[_key] = self.sintb(_nb)
                     # TODO: use command.Command
                     if self.commands[0]['status'] != 'sent_status':
-                        r_str = str(_reply)
+                        r_str = 'border_flags={border_flags} ender_flags={ender_flags} left_border={left_border} uleft_border={uleft_border} right_border={right_border} uright_border={uright_border}'.format(**(self.object))
                     break
 
                 if self.iscom('gpos'):
@@ -510,7 +509,9 @@ if __name__ == '__main__':
     # May be anything that will be passed by reference - list, dict, object etc
     obj = {'hw_connected': 0,
            'position': 'nan', 'uposition': 'nan', 'encposition': 'nan',
-           'speed': 'nan', 'uspeed': 'nan', 'accel': 'nan', 'decel': 'nan', 'anti_play_speed': 'nan', 'uanti_play_speed': 'nan', }
+           'speed': 'nan', 'uspeed': 'nan', 'accel': 'nan', 'decel': 'nan', 'anti_play_speed': 'nan', 'uanti_play_speed': 'nan',
+           'border_flags' : 'nan', 'ender_flags' : 'nan', 'left_border' : 'nan', 'uleft_border' : 'nan', 'right_border' : 'nan', 'uright_border' : 'nan',
+           }
 
     # daemon handling communication with the rest of the system
     daemon = SimpleFactory(DaemonProtocol, obj)
