@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from argparse import ArgumentParser
+import argparse
 from libscrc import modbus
 
 from daemon import SimpleFactory, SimpleProtocol, SerialUSBProtocol, catch
@@ -10,6 +10,18 @@ import sys
 import logging
 logging.basicConfig(level=logging.ERROR)
 import pdb
+
+import textwrap
+# https://stackoverflow.com/a/64102901
+class MultilineFormatter(argparse.HelpFormatter):
+    def _fill_text(self, text, width, indent):
+        text = textwrap.dedent(text)          # Strip the indent from the original python definition that plagues most of us.
+        text = textwrap.indent(text, indent)  # Apply any requested indent.
+        text = text.splitlines()              # Make a list of lines
+        text = [textwrap.fill(line, width) for line in text] # Wrap each line
+        text = "\n".join(text)                # Join the lines again
+        return text
+
 
 class DaemonProtocol(SimpleProtocol):
     """Protocol specifying how to communicate with the Standa 8MSC5-USB controller.
@@ -35,7 +47,7 @@ class DaemonProtocol(SimpleProtocol):
 
     @catch
     def parsePars(self, cmd, pars_o, ss, rbs, nb=4):
-        """Valiate and parse the parameters of a command, then send it.
+        """Validate and parse the parameters of a setter command, then send it.
         cmd : str
             command to be sent
         pars_o : list [[int, str]]
@@ -114,7 +126,7 @@ class DaemonProtocol(SimpleProtocol):
         # TODO: document command syntax in docstring - well no, README.md already has it.
         # but: this method also implements
         # 1) query commands nb<xxxx
-        # 2) setter commands xxxx nb1=value1 nb2=value2
+        # 2) setter commands xxxx value1,nb1 value2,nb2 r,rbs
         cmd = SimpleProtocol.processMessage(self, string)
         if cmd is None:
             return
@@ -345,7 +357,7 @@ class StandaVSProtocol(SerialUSBProtocol):
 
     @catch
     def processBinary(self, bstring):
-        # Process the device reply
+        '''Process the device reply'''
         self._bs = bstring
         if self._debug:
             print("hw bb > %s" % self._bs)
@@ -485,18 +497,49 @@ class StandaVSProtocol(SerialUSBProtocol):
 
 
 if __name__ == '__main__':
-    parser = ArgumentParser(description='Module for the Standa vertical stage 8MVT100-25-1.')
+    doc_title = 'Module for the Standa vertical stage 8MVT100-25-1, via the 8SMC5-USB controller.'
+    # TODO: generate automatically after making command set into a data structure
+    doc_commands = ['''ccdlab-internal commands
+    - get_status
+    ''',
+    '''Connection commands
+    - timeout
+    - sync
+    ''',
+    '''High-level query commands
+    - get_device_info
+    - get_move_pars
+    - get_edge_settings
+    - get_position
+    ''',
+    '''High-level setter commands
+    - move POSITION UPOSITION
+    - move_in_direction DELTA UDELTA
+    - set_zero
+    - set_move_pars SPEED USPEED ACCEL DECEL ANTI_PLAY_SPEED UANTI_PLAY_SPEED
+    ''',
+    '''Generic query command, format NBYTES<COMMAND
+    The four-character commands and the respective number of bytes sent as a reply are given in the controller manual.
+    ''',
+    '''Generic setter command, format COMMAND VALUE1,NBYTES1 VALUE2,NBYTES2 [r,RESERVED BYTES]
+    The four-character commands, their arguments and the numbers of bytes they take up are given in the controller manual.
+                    ''']
+    doc_commands_string = '\n'.join(['{}) {}'.format(*_cmd) for _cmd in enumerate(doc_commands)])
+    parser = argparse.ArgumentParser(description = doc_title,
+                                     epilog = doc_commands_string,
+                                     formatter_class = MultilineFormatter,
+                                     )
     parser.add_argument('-s', '--serial-num',
-                        help='Serial number identifying the USB device to connect to. \n The number is hexadecimal and zero-padded to 8 digits, may be found written in decimal on the bottom of the controller.',
+                        help='Serial number identifying the USB device to connect to. The number is hexadecimal and zero-padded to 8 digits, may be found written in decimal on the bottom of the controller.',
                         action='store', type=str, default='00004CCA') # written on controller, in hexadecimal, zero-padded to 8
     parser.add_argument('-p', '--port',
-                        help='Daemon port, where `telnet localhost [PORT]` sends commands to the daemon.',
-                        action='store', type=int, default=7027)
+                        help='Daemon port, where `telnet localhost PORT` opens a connection which sends commands to the daemon.',
+                        action='store', type=int, default=7028)
     parser.add_argument('-n', '--name',
                         help='Daemon name',
                         action='store', type=str, default='standa_v_stage')
     parser.add_argument('-r', '--refresh',
-                        help='Interval in seconds to update the command queue. For [REFRESH]<=0, use the default defined in SerialUSBProtocol.',
+                        help='Interval in seconds to update the command queue and query the device state. For REFRESH<=0, use the default defined in SerialUSBProtocol.',
                         action='store', type=float, default=1.0)
     parser.add_argument('-D', '--debug',
                         help='Debug mode, print extra messages and suppress default status commands.',
